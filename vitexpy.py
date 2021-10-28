@@ -12,6 +12,7 @@ import requests
 
 __version__ = '1.0.4'
 
+
 """
 -----------------------------------------------------------------------
    vitex-py | `blacktyger
@@ -23,6 +24,113 @@ API DOCUMENTATION: https://vite.wiki/dex/api/dex-apis.html#overview
 
 DONATIONS: 
 """
+
+
+class Order:
+    """
+    Base class to manage ViteX exchange orders as objects,
+    Basic values handlers before creating object (like non negative numbers etc)
+    template for future subclasses with more abstraction build around
+
+    :param pair:
+    :param side:
+    :param amount:
+    :param price:
+    """
+    def __init__(self, pair: str, side: Union[str, int, float, bool],
+                 amount: Union[int, float, str, Decimal],
+                 price: Union[int, float, str, Decimal]):
+
+        self.pair = pair
+        self.side = side
+        self.price = price
+        self.amount = amount
+        self.decimals = Decimal(10) ** -8  # default value
+
+        self.base = self._pair.split('_')[0]
+        self.quota = self._pair.split('_')[1]
+
+        self.metadata = dict
+
+    def __repr__(self):
+        return f"Order({self._side[1].capitalize()} | " \
+               f"{float(self.amount.quantize(self.decimals).normalize())} {self.base} for " \
+               f"{self.price.quantize(self.decimals).normalize()} {self.quota})"
+
+    @property
+    def pair(self):
+        return self._pair
+
+    @pair.setter
+    def pair(self, value):
+        # print(value)
+        if '_' in value:
+            self._pair = str(value)
+        else:
+            raise ValueError(f"input [{value}] - wrong market/pair symbol or pattern ('BASE-XXX_QUOT-XXX')")
+
+    @property
+    def side(self):
+        return self._side
+
+    @side.setter
+    def side(self, value):
+        def stringfy(side):
+            if side:
+                return 'sell'
+            else:
+                return 'buy'
+
+        # print(value)
+        if isinstance(value, str):
+            # print('str side')
+            if any(value in x for x in ['buy', 'Buy', 'BUY', '0']):
+                self._side = (0, stringfy(0))
+            elif any(value in x for x in ['sell', 'Sell', 'SELL', '1']):
+                self._side = (1, stringfy(1))
+
+        elif isinstance(value, (int, float)):
+            # print('int/float side')
+            self._side = (int(value) if int(value) in [0, 1] else 1, stringfy(int(value)))
+
+        elif isinstance(value, bool):
+            # print('bool side')
+            self._side = (int(bool is True), stringfy(int(bool is True)))
+
+        else:
+            raise ValueError(f"input [{value}] - can't parse this as side value")
+
+    @property
+    def amount(self):
+        return self._amount
+
+    @amount.setter
+    def amount(self, value):
+        try:
+            value = Decimal(value)
+            if value <= 0:
+                raise ValueError(f"input [{value}] - value must be bigger than 0")
+
+            self._amount = Decimal(value)
+        except Exception as e:
+            print(e)
+            raise ValueError(f"input [{value}] can't be parsed as Decimal object")
+
+    @property
+    def price(self):
+        return self._price
+
+    @price.setter
+    def price(self, value):
+        try:
+            value = Decimal(value)
+            if value <= 0:
+                raise ValueError(f"input [{value}] - value must be bigger than 0")
+
+            self._price = Decimal(value)
+        except Exception as e:
+            print(e)
+            raise ValueError(f"input [{value}] can't be parsed as Decimal object")
 
 
 class PublicAPI:
@@ -135,7 +243,6 @@ class PublicAPI:
 
         json_response = requests.get(url, params).json()
         response = self._response_parser(json_response)
-        # print(response)
 
         if 'data' in response.keys() and 'ok' in response['msg']:
             response['msg'] = f'found token [{tokenSymbol if tokenSymbol else tokenId}] but no data present'
@@ -222,21 +329,39 @@ class PublicAPI:
         response = self._response_parser(json_response)
         return response
 
-    def get_order(self, address=None, orderId=None) -> dict:
+    def get_order(self, address=None, orderId=None) -> list:
         """
         :param address: REQUIRED! User's account address (not delegation address)
         :param orderId: REQUIRED! Order id
-        :return: Dictionary, single order details
+        :return: List, single Order object
 
-        RESPONSE: # TODO
+        RESPONSE:{'address': 'vite_15d3230e3c31c009c968beea7160ae98b491475236ae2cddbc',
+                  'orderId': 'bba7552f0ef4aefef95e741a63ed11f66e62a33009e7adda5db0ab285ac59801',
+                  'symbol': 'EPIC-002_BTC-000',
+                  'tradeTokenSymbol': 'EPIC-002',
+                  'quoteTokenSymbol': 'BTC-000',
+                  'tradeToken': 'tti_f370fadb275bc2a1a839c753',
+                  'quoteToken': 'tti_b90c9baffffc9dae58d1f33f',
+                  'side': 1,
+                  'price': '0.00003999',
+                  'quantity': '9.00000000',
+                  'amount': '0.00035991',
+                  'executedQuantity': '9.00000000',
+                  'executedAmount': '0.00035991',
+                  'executedPercent': '1.00000000',
+                  'executedAvgPrice': '0.00003999',
+                  'fee': '0.00000130',
+                  'status': 4, 'type': 0,
+                  'createTime': 1635343678},
+                  ...]}
         """
         url = self.base_url + "/api/v2/order"
         params = {'address': address, 'orderId': orderId}
         json_response = requests.get(url, params).json()
         response = self._response_parser(json_response)
-        return response
+        return self._create_order(response)
 
-    def get_orders(self, address=None, **kwargs) -> dict:
+    def get_orders(self, address=None, **kwargs) -> list:
         """
         :param address: REQUIRED! User's account address (not delegation address)
         :param symbol: Trading pair name. For example, EPIC-002_BTC-000
@@ -252,7 +377,7 @@ class PublicAPI:
         :param limit: Search limit, default 30 , max 100
         :param total: Include total number searched in result? 0 - not included, 1 - included.
                       Default is 0 , in this case total=-1 in response
-        :return: Dictionary, filtered orders
+        :return: List, Order objects
 
         RESPONSE: {'order': [{'address': 'vite_15d3230e3c31c009c968beea7160ae98b491475236ae2cddbc',
                               'orderId': 'bba7552f0ef4aefef95e741a63ed11f66e62a33009e7adda5db0ab285ac59801',
@@ -278,7 +403,34 @@ class PublicAPI:
         params = {**{'address': address}, **kwargs}
         json_response = requests.get(url, params).json()
         response = self._response_parser(json_response)
-        return response
+        return self._create_order(response)
+
+    @staticmethod
+    def _create_order(response: Union[dict, list]) -> list:
+        """
+        Create Order object from response data
+        :param response: order data
+        :return: List, Order object/s
+        """
+        orders = []
+        if isinstance(response, list):
+            for order_ in response['order']:
+                order = Order(pair=order_['symbol'],
+                              side=order_['side'],
+                              amount=order_['quantity'],
+                              price=order_['price'])
+                order.meta = order_
+                orders.append(order)
+
+        elif isinstance(response, dict):
+            order = Order(pair=response['symbol'],
+                          side=response['side'],
+                          amount=response['quantity'],
+                          price=response['price'])
+            order.meta = response
+            orders.append(order)
+
+        return orders
 
     def get_24hr_ticker_price_changes(self, quoteTokenSymbol=None) -> list:
         """
@@ -308,7 +460,6 @@ class PublicAPI:
         url = self.base_url + "/api/v2/ticker/24hr"
         params = {'quoteTokenSymbol': quoteTokenSymbol}
         json_response = requests.get(url, params).json()
-        print(json_response)
         response = self._response_parser(json_response)
         return response
 
@@ -641,9 +792,8 @@ class TradingAPI(PublicAPI):
 
         return params
 
-    def place_order(self, test=False, symbol=None, amount=None, price=None, side=None) -> dict:
+    def prepare_order(self, symbol=None, amount=None, price=None, side=None) -> dict:
         """
-        :param test: Bool, if True transaction will NOT be send to network, but signature will be validated
         :param symbol: Trading pair name. For example EPIC-002_BTC-000
         :param amount: Order amount (in trade token)
         :param price: Order price
@@ -654,27 +804,20 @@ class TradingAPI(PublicAPI):
                    'orderId': 'a2dcb37e54f2...',
                    'status': 1}
         """
-        if test:
-            url = self.base_url + "/api/v2/order/test"
-        else:
-            url = self.base_url + "/api/v2/order"
+        url = self.base_url + "/api/v2/order/test"
 
         params = {'symbol': symbol, 'amount': amount,
                   'price': price, 'side': side}
 
         if None in params.values():
-            print({'code': 1, 'data': None,
-                   'msg': f'All [{", ".join(str(x) for x in params.keys())}] must be provided'})
-            return {}
+            response = {'code': 1, 'data': None,
+                        'msg': f'All [{", ".join(str(x) for x in params.keys())}] must be provided'}
+            if self.print_response:
+                print(response)
+            return response
 
         params = self._prepare_decimals(params)
-        # print(params)
-
         signed_params = self._prepare_signature(params)
-        # print(signed_params)
-
         json_response = requests.post(url, signed_params).json()
         response = self._response_parser(json_response)
         return response
-
-
