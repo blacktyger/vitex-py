@@ -678,33 +678,3 @@ class TradingAPI(PublicAPI):
         return response
 
 
-user_key = '843DE9BB823C0F1F0E23581AA6A8252C'
-user_secret = 'A8FCC8BC79565DF19DBABF77DA23E647'
-
-order_params = {
-    'test': True,  # Optional, when True transactions are not executed in network
-    'symbol': 'EPIC-002_BTC-000',  # Market pair symbol ('BASE-XXX_QUOTA-XXX')
-    'amount': 5,  # Amount to buy or sell in base token ('EPIC-002' in this case)
-    'price': 0.00006000,  # Price for each base token ('EPIC-002') in quota token ('BTC-000')
-    'side': 1,  # Buy(0) or Sell(1)
-    }
-
-api = TradingAPI(api_key=user_key,
-                 api_secret=user_secret,
-                 print_response=True)
-
-api.place_order(**order_params)
-
-
-# PublicAPI(print_response=True).get_trading_pair('EPIC-002_BTC-000')
-# 0 = buy
-# address = "vite_15d3230e3c31c009c968beea7160ae98b491475236ae2cddbc"
-# epic_id = 'tti_f370fadb275bc2a1a839c753'
-#
-# print(TradingAPI(api_key=user_key, api_secret=user_secret). \
-#       place_order(symbol='EPIC-002_BTC-000', amount=3, price='0.00005100', side=1))
-
-# t = TradingAPI()
-#
-# t.place_order()
-# print(PublicAPI().get_order_limit())
