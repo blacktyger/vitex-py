@@ -16,46 +16,52 @@ Python wrapper for ViteX - Decentralized cryptocurrency exchange API.
 - Handling transaction signatures required by ViteX API
 - Decimals library to keep high precision with floating point numbers 
 - Well documented and readable for everyone
-- OOP approach with **Order** and **API** objects
+- OOP approach with **Token**, **TraidingPair**, **Order**, and **API** objects
 
 
 ## How to use:
 - 🔎 **PublicAPI** can be used out of the box without API keys, 
 enough to extract most of market data available for this platform
-
+- All PublicAPI endpoints https://vite.wiki/dex/api/dex-apis.html#public-rest-api
 
 ```
 from vitexpy import PublicAPI
 
 api = PublicAPI(print_response=True)  # Default: False
 
+# Test connection with ViteX server
 api.test_connection()
 >>> Successfully connected to ViteX API with vitex-py module
 >>> Server time: 2021-10-28 12:50:44.469000
 >>> USD  /  CNY: 6.466199999999926
 
-api.get_token_detail('EPIC-002')
->>> {'code': 0, 'msg': 'ok', 'data': {
->>>  'tokenId': 'tti_f370fadb275bc2a1a839c753', 
->>>  'name': 'Epic Cash', 'symbol': 'EPIC-002', 
->>>  'originalSymbol': 'EPIC', ...}, }
+# Get list with Token object/s
+api.get_token('EPIC-002')  
+>>> [Token(EPIC-002)]
 
-api.get_trading_pair('EPIC-002_BTC-000')
->>> {'code': 0, 'msg': 'ok', 'data': {
->>>  'symbol': 'EPIC-002_BTC-000', 
->>>  'tradingCurrency': 'EPIC-002', 
->>>  'quoteCurrency': 'BTC-000', ...}, }
+# Get list with all Token object/s
+api.get_all_tokens()  
+>>> [Token(AAVO-000), Token(ABC-000), Token(AGS-000), ...]
+
+# Get list with TradingPair object/s
+api.get_trading_pair('EPIC-002_BTC-000')  
+>>> [TradingPair(EPIC-002/BTC-000)]
+
 ```
+
+
+
+
+
 - 📈 **TradingAPI** requires signature authentication by API Key and API Secret,
   which you can apply for on ViteX platform.
   Please note that API Key and API Secret are both case sensitive. 
   Also it is recommended to stake some VITE for QUOTA ('transactions fuel') 
   in order to execute multiple transactions. 
-  
+- All TradingAPI endpoints https://vite.wiki/dex/api/dex-apis.html#private-rest-api
 
- 
 ```
-from vitexpy import TradingAPI
+from vitexpy import TradingAPI, TradingPair
 
 api_key = "YOUR VITEX API KEY"
 api_secret = "YOUR VITEX API SECRET"
@@ -64,6 +70,7 @@ api = TradingAPI(api_key=user_key,
                  api_secret=user_secret,
                  print_response=True)
 
+# Create dictionary with required values
 order_params = {
     'test': True,  # Optional, when True transactions are not executed in network
     'symbol': 'EPIC-002_BTC-000',  # Market pair symbol ('BASE-XXX_QUOTA-XXX')
@@ -71,11 +78,15 @@ order_params = {
     'price': 0.00006000,  # Price for each base token ('EPIC-002') in quota token ('BTC-000')
     'side': 1,  # Buy(0) or Sell(1)
     }
-    
 
-# If test=False this will place real sell order on EPIC/BTC market
-api.place_order(**order_params)  
+# Create Order object with given params
+order = api.prepare_order(**order_params)  
 
+# Prepare, sign and execute Order object to Vitex network
+api.execute_order(order)  
+
+# Cancel all orders within given pair (TradingPair object or string with symbol)
+api.cancel_all_orders(pair='EPIC-002_BTC-00')
 
 ```
 ## 💌 Donations

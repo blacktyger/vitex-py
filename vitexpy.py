@@ -18,8 +18,8 @@ __version__ = '1.0.4'
   donations | vite_15d3230e3c31c009c968beea7160ae98b491475236ae2cddbc
 -----------------------------------------------------------------------
 
-DECENTRALIZED EXCHANGE: https://x.vite.net/
 API DOCUMENTATION: https://vite.wiki/dex/api/dex-apis.html#overview 
+DECENTRALIZED EXCHANGE: https://x.vite.net/
 """
 
 
@@ -71,6 +71,21 @@ class TradingPair:
         return f"TradingPair({self.symbol.replace('_', '/')})"
 
 
+class HistoryOrder:
+    """ Helping class to save and work with already executed in past orders fetched by API
+    :param pair: TradingPair object
+    :param meta: _dict, order details from ViteX API
+    """
+    def __init__(self, pair: Union[TradingPair, str],
+                 meta: dict = None, network_response: dict = None):
+        self.pair = pair
+        self.meta = meta
+        self.network_response = network_response
+
+    def __repr__(self):
+        return f"HistoryOrder({self.pair.symbol} | {self.meta['status'] if 'status' in self.meta.keys() else ''})"
+
+
 class Order:
     """
     Base class to manage ViteX exchange orders as objects,
@@ -84,10 +99,12 @@ class Order:
     :param meta: _dict, order details from ViteX API
     """
 
-    def __init__(self, pair: Token, side: Union[str, int, float, bool],
-                 amount: Union[int, float, str, Decimal],
-                 price: Union[int, float, str, Decimal],
-                 meta: dict = None):
+    def __init__(self,
+                 pair: TradingPair, side: Union[str, int, float, bool] = None,
+                 amount: Union[int, float, str, Decimal] = None,
+                 price: Union[int, float, str, Decimal] = None,
+                 meta: dict = None, signature: str = None,
+                 network_response: dict = None):
 
         self.pair = pair
         self.side = side
@@ -95,14 +112,31 @@ class Order:
         self.price = price
         self.amount = amount
         self.decimals = Decimal(10) ** -8  # default value
+        self.signature = signature
+        self.network_response = network_response
 
-        self.trading = self._pair.split('_')[0]
-        self.quote = self._pair.split('_')[1]
+        if self.pair.trading_token and self.pair.quote_token:
+            self.trading_symbol = self._pair.trading_token.symbol
+            self.quote_symbol = self._pair.quote_token.symbol
+        else:
+            self.trading_symbol = self._pair.symbol.split('_')[0]
+            self.quote_symbol = self._pair.symbol.split('_')[1]
+
+    def __iter__(self):
+        # Calling dict(this_obj) will yield required
+        # parameters for POST request to network (hacky)
+        yield 'symbol', self.pair.symbol
+        yield 'side', self.side[0]
+        yield 'price', str(self.price)
+        yield 'amount', str(self.amount)
 
     def __repr__(self):
         return f"Order({self._side[1].capitalize()} | " \
-               f"{float(self.amount.quantize(self.decimals).normalize())} {self.trading} for " \
-               f"{self.price.quantize(self.decimals).normalize()} {self.quote})"
+               f"{float(self.amount.quantize(self.decimals).normalize())} {self.trading_symbol} for " \
+               f"{self.price.quantize(self.decimals).normalize()} {self.quote_symbol})"
+
+    def get_params(self):
+        return
 
     @property
     def pair(self):
@@ -111,9 +145,10 @@ class Order:
     @pair.setter
     def pair(self, value):
         # print(value)
-        if '_' in value:
-            self._pair = str(value)
-        else:
+        try:
+            self._pair = value
+        except Exception as e:
+            print(e)
             raise ValueError(f"input [{value}] - wrong market/pair symbol or pattern ('BASE-XXX_QUOT-XXX')")
 
     @property
@@ -187,6 +222,8 @@ class PublicAPI:
     """
     BASE_URL = "https://api.vitex.net"
     API_VERSION = 'ViteX API v2'
+    ORDER_STATES = ["Unknown", "PendingRequest", "Received", "Open", "Filled", "PartiallyFilled", "PendingCancel",
+                    "Cancelled", "PartiallyCancelled", "Failed", "Expired"]
 
     def __init__(self, print_response=False):
         """
@@ -198,15 +235,23 @@ class PublicAPI:
 
     def _response_parser(self, response: dict) -> Union[dict, list, int, float, str]:
         """Parse API responses"""
+        if self.print_response:
+            print(response)
+
         if isinstance(response, dict):
-            if not response['code'] and response['data'] is not None:
-                if self.print_response:
-                    print(response)
-                return response['data']
+            if not response['code']:
+                if response['data'] is not None:
+                    return response['data']
+                elif response['msg']:
+                    return response['msg']
+                else:
+                    return response
             else:
-                if self.print_response:
-                    print(response)
-                return response
+                if 'The order status has been terminated' in response['msg']:
+                    response['msg'] = f"Order already canceled"
+                    return response
+                else:
+                    return response
 
     def get_order_limit(self) -> dict:
         """
@@ -275,7 +320,7 @@ class PublicAPI:
                 token.name = response['name']
                 token.meta = response
             except Exception as e:
-                print(e)
+                print(f"_create_token_object: {e}")
             tokens.append(token)
 
         return tokens
@@ -322,7 +367,7 @@ class PublicAPI:
         response = self._response_parser(json_response)
         return self._create_token_object(response)
 
-    def get_token_detail(self, tokenSymbol=None, tokenId=None, **kwargs) -> list:
+    def get_token(self, tokenSymbol=None, tokenId=None, **kwargs) -> list:
         """
         :param tokenSymbol: Token symbol. For example EPIC-002
         :param tokenId: Token id. For example, tti_5649544520544f4b454e6e40
@@ -738,15 +783,12 @@ class PublicAPI:
         response = self._response_parser(json_response)
         return response
 
-    def get_server_time(self, timestamp=False) -> int:
+    def get_server_time(self) -> int:
         """
-        :param timestamp:
         :return: Int, Vitex server timestamp, need for making transactions signatures
         """
-        if timestamp:
-            url = self.base_url + "/api/v2/timestamp"
-        else:
-            url = self.base_url + "/api/v2/time"
+
+        url = self.base_url + "/api/v2/time"
         json_response = requests.get(url).json()
         response = self._response_parser(json_response)
         return int(response)
@@ -765,18 +807,18 @@ class PublicAPI:
         try:
             ts = self.get_server_time()
             dt = datetime.datetime.utcfromtimestamp(ts / 1000)
-        except Exception as e:
+        except Exception:
             dt = False
 
         try:
             t2 = f"{self.get_usd_cny_rate()}"
-        except Exception as e:
+        except Exception:
             t2 = False
 
         if dt or t2:
-            print(f"Successfully connected to ViteX API with vitex-py module\n"
-                  f"Server time: {dt if dt else 'ERROR'}\n"
-                  f"USD  /  CNY: {t2 if t2 else 'ERROR'}")
+            print(f"✅ Successfully connected to ViteX API with vitex-py module\n"
+                  f"Server time: {f'{dt} (from vitex.net server)' if dt else 'ERROR'}\n"
+                  f"USD  /  CNY: {f'{t2} (from vitex.net server)' if t2 else 'ERROR'}")
 
 
 class TradingAPI(PublicAPI):
@@ -830,13 +872,11 @@ class TradingAPI(PublicAPI):
             signature_str = signature.hexdigest()
             return signature_str
         except Exception as e:
-            print(e)
+            print(f"_sign_transaction: {e}")
             return ''
 
     def _prepare_signature(self, params: dict) -> dict:
-        """
-        Prepare given parameters and add auth_params needed in every transaction
-
+        """ Prepare given parameters and add auth_params needed in every transaction
         :param timestamp - Int, Timestamp (s)
         :param key - String,  API Key
         :param signature - String, HMAC SHA256 signature of request String
@@ -851,10 +891,12 @@ class TradingAPI(PublicAPI):
         - Attach the signature to request String in signature field
         :return: Dictionary, ready to POST request params
         """
+
+        # In case of temporary connection issue try again after 1s
         try:
             auth_params = {"key": self.api_key, "timestamp": self.get_server_time()}
         except Exception as e:
-            print(e)
+            print(f"_prepare_signature: {e}")
             time.sleep(1)
             auth_params = {"key": self.api_key, "timestamp": self.get_server_time()}
 
@@ -873,7 +915,6 @@ class TradingAPI(PublicAPI):
         :param params: Dictionary, order POST request params
         :return: Dictionary, prepared order POST requests params
         """
-
         # Check if expected values are not None
         if not params['amount'] or not params['price']:
             return params
@@ -882,48 +923,176 @@ class TradingAPI(PublicAPI):
         amount_decimals = price_decimals = Decimal(10) ** -8
 
         try:
-            # Try to get number of decimal places for each token from API
-            details = self.get_trading_pair(params['symbol'])
-            amount_decimals = Decimal(10) ** -(details['amountPrecision'])
-            price_decimals = Decimal(10) ** -(details['pricePrecision'])
+            # From API try to get number of decimal places for both tokens
+            details = self.get_trading_pair(params['pair'].symbol)[0]
+            amount_decimals = Decimal(10) ** -(details.meta['amountPrecision'])
+            price_decimals = Decimal(10) ** -(details.meta['pricePrecision'])
         except Exception as e:
-            print(e)
+            print(f"_prepare_decimals: {e}")
 
         # Convert values to Decimal and set correct decimal places
         try:
             params['amount'] = str(Decimal(params['amount']).quantize(amount_decimals))
             params['price'] = str(Decimal(params['price']).quantize(price_decimals))
         except Exception as e:
-            print(e)
+            print(f"_prepare_decimals: {e}")
 
         return params
 
-    def prepare_order(self, symbol=None, amount=None, price=None, side=None) -> dict:
-        """
-        :param symbol: Trading pair name. For example EPIC-002_BTC-000
+    def prepare_order(self, pair: Union[str, TradingPair] = None,
+                      amount: Union[int, float, str, Decimal] = None,
+                      price: Union[int, float, str, Decimal] = None,
+                      side: Union[str, int, float, bool] = None) -> Order:
+
+        """ Take parameters and prepare Order object ready to sign and execute
+
+        :param pair: TradingPair object or string with pair symbol, for example 'EPIC-002_BTC-000'
         :param amount: Order amount (in trade token)
-        :param price: Order price
+        :param price: Order price (in quote token)
         :param side: Buy - 0 , Sell - 1
-        :return: Dictionary, orderID and other order details
-
-        RESPONSE: {'symbol': 'EPIC-002_BTC-000',
-                   'orderId': 'a2dcb37e54f2...',
-                   'status': 1}
+        :return: Order object
         """
-        url = self.base_url + "/api/v2/order/test"
 
-        params = {'symbol': symbol, 'amount': amount,
+        if isinstance(pair, str):
+            pair = TradingPair(symbol=pair)
+
+        params = {'pair': pair, 'amount': amount,
                   'price': price, 'side': side}
 
         if None in params.values():
-            response = {'code': 1, 'data': None,
-                        'msg': f'All [{", ".join(str(x) for x in params.keys())}] must be provided'}
-            if self.print_response:
-                print(response)
-            return response
+            raise ValueError(f'Each value from [{", ".join(str(x) for x in params.keys())}] '
+                             f'must be provided')
 
-        params = self._prepare_decimals(params)
-        signed_params = self._prepare_signature(params)
-        json_response = requests.post(url, signed_params).json()
+        order = Order(**self._prepare_decimals(params))
+        return order
+
+    def execute_order(self, order: Order, test: bool = False) -> Order:
+        """
+        :param order: Order object, prepared and ready to execute
+        :param test: _bool, if true do not execute order in network
+        :return: Order object with updated network_response argument
+        """
+        if test:
+            url = self.base_url + "/api/v2/order/test"
+        else:
+            url = self.base_url + "/api/v2/order"
+
+        order.signature = self._prepare_signature(dict(order))
+        json_response = requests.post(url, order.signature).json()
         response = self._response_parser(json_response)
-        return response
+        res = order.network_response = response
+
+        if not test:
+            # Print success report or handle order error
+            if 'status' in res.keys():
+
+                # Translate status number to human readable message
+                readable_status = self.ORDER_STATES[res['status']]
+                order.network_response['status'] = readable_status
+
+                print(f'-----------------------------------------\n'
+                      f"✅ Successfully executed!\n"
+                      f"{order}\n"
+                      f"ID: {res['orderId']}\n"
+                      f"STATUS: {res['status']}\n"
+                      f"-----------------------------------------")
+
+            elif 'msg' in res.keys():
+                if 'out of quota' in res['msg']:
+                    print(f"Not enough QUOTA to execute this order")
+                else:
+                    print(res['msg'])
+        else:
+            print(f'-----------------------------------------\n'
+                  f"Test order executed\n"
+                  f"{order}\n"
+                  f"NETWORK RESPONSE: {res}\n"
+                  f"-----------------------------------------")
+
+        return order
+
+    def cancel_order(self, order: Union[Order, HistoryOrder] = None, id: str = None,
+                     pair: Union[TradingPair, str] = None) -> list:
+        """
+        :param id: _str, Vitex network order ID (order must be already executed)
+        :param pair: TradingPair object or string with pair symbol, for example 'EPIC-002_BTC-000'
+        :param order: Order object to cancel
+        :return: _list, Order object
+        """
+
+        url = self.base_url + "/api/v2/order"
+
+        if not isinstance(pair, TradingPair):
+            pair = TradingPair(symbol=pair)
+
+        if not order:
+            order = HistoryOrder(pair=pair, meta={'orderId': id})
+
+        params = {'symbol': order.pair.symbol,
+                  'orderId': order.meta['orderId']}
+
+        signature = self._prepare_signature(params)
+        json_response = requests.delete(url, data=signature).json()
+        response = self._response_parser(json_response)
+
+        order.network_response = response
+        return [order]
+
+    def cancel_all_orders(self, pair: Union[TradingPair, str] = None) -> list:
+        """
+        :param pair: TradingPair object or string with pair symbol, for example 'EPIC-002_BTC-000'
+        :return: List, Order object/s
+
+        RESPONSE:  [{"symbol": "VX_ETH-000",
+                      "orderId": "de185edae25a60dff421c1be23ac298b121cb8bebeff2ecb25807ce7d72cf622",
+                      "cancelRequest": "355b6fab007d86e7ff09b0793fbb205e82d3880b64d948ed46f88237115349ab",
+                      "status": 6
+                    }, ...]
+        """
+
+        url = self.base_url + "/api/v2/orders"
+
+        if not isinstance(pair, TradingPair):
+            pair = TradingPair(symbol=pair)
+
+        signature = self._prepare_signature({'symbol': pair.symbol})
+        json_response = requests.delete(url, data=signature).json()
+        response = self._response_parser(json_response)
+
+        canceled_orders = []
+        if response and isinstance(response, list):
+            for order_ in response:
+                pair = TradingPair(symbol=order_['symbol'])
+
+                # Translate status number to human readable message
+                readable_status = self.ORDER_STATES[order_['status']]
+                order_['status'] = readable_status
+                canceled_orders.append(HistoryOrder(pair=pair, meta=order_))
+
+            return canceled_orders
+
+        else:
+            if isinstance(response, dict) and 'msg' in response.keys():
+                print(response['msg'])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
