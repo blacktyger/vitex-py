@@ -12,7 +12,6 @@ import requests
 
 __version__ = '1.0.4'
 
-
 """
 -----------------------------------------------------------------------
    vitex-py | `blacktyger
@@ -20,42 +19,90 @@ __version__ = '1.0.4'
 -----------------------------------------------------------------------
 
 DECENTRALIZED EXCHANGE: https://x.vite.net/
-API DOCUMENTATION: https://vite.wiki/dex/api/dex-apis.html#overview
-
-DONATIONS: 
+API DOCUMENTATION: https://vite.wiki/dex/api/dex-apis.html#overview 
 """
+
+
+class Token:
+    """
+    Base class to manage ViteX tokens as objects,
+    Template for future subclasses with more abstraction build around
+
+    :param id: _str, token ID, example: 'tti_f370fadb275bc2a1a839c753'
+    :param symbol: _str, token symbol, example: 'EPIC-002'
+    :param name: _str, token name, example: 'Epic Cash'
+    :param meta: _dict, token details from ViteX API
+    """
+
+    def __init__(self, id: str,
+                 symbol: str,
+                 name: str = None,
+                 meta: dict = None):
+        self.id = id
+        self.name = name
+        self.meta = meta
+        self.symbol = symbol
+
+    def __repr__(self):
+        return f"Token({self.symbol})"
+
+
+class TradingPair:
+    """
+    Base class to manage ViteX trading pairs as objects,
+    Template for future subclasses with more abstraction build around
+
+    :param symbol: _str, trading pair symbol, example: 'EPIC-002_BTC-000'
+    :param trading_token: Token object you buying, example EPIC-002
+    :param quote_token: Token object you pay with, example BTC-000
+    :param meta: _dict, token details from ViteX API
+    """
+
+    def __init__(self, symbol: str,
+                 trading_token: Token = None,
+                 quote_token: Token = None,
+                 meta: dict = None):
+        self.symbol = symbol
+        self.trading_token = trading_token
+        self.quote_token = quote_token
+        self.meta = meta
+
+    def __repr__(self):
+        return f"TradingPair({self.symbol.replace('_', '/')})"
 
 
 class Order:
     """
     Base class to manage ViteX exchange orders as objects,
     Basic values handlers before creating object (like non negative numbers etc)
-    template for future subclasses with more abstraction build around
+    template for future subclasses with more abstraction build around (tx status etc)
 
-    :param pair:
-    :param side:
-    :param amount:
-    :param price:
+    :param pair: TradingPair object
+    :param side: Tuple, (0, Buy) or (1, Sell)
+    :param price: Decimal object, in quota token
+    :param amount: Decimal object, in trading token
+    :param meta: _dict, order details from ViteX API
     """
-    def __init__(self, pair: str, side: Union[str, int, float, bool],
+
+    def __init__(self, pair: Token, side: Union[str, int, float, bool],
                  amount: Union[int, float, str, Decimal],
-                 price: Union[int, float, str, Decimal]):
+                 price: Union[int, float, str, Decimal],
+                 meta: dict = None):
 
         self.pair = pair
         self.side = side
+        self.meta = meta
         self.price = price
         self.amount = amount
         self.decimals = Decimal(10) ** -8  # default value
 
-        self.base = self._pair.split('_')[0]
-        self.quota = self._pair.split('_')[1]
-
-        self.metadata = dict
+        self.trading = self._pair.split('_')[0]
+        self.quote = self._pair.split('_')[1]
 
     def __repr__(self):
         return f"Order({self._side[1].capitalize()} | " \
-               f"{float(self.amount.quantize(self.decimals).normalize())} {self.base} for " \
-               f"{self.price.quantize(self.decimals).normalize()} {self.quota})"
+               f"{float(self.amount.quantize(self.decimals).normalize())} {self.trading} for " \
+               f"{self.price.quantize(self.decimals).normalize()} {self.quote})"
 
     @property
     def pair(self):
@@ -173,6 +220,86 @@ class PublicAPI:
         response = self._response_parser(json_response)
         return response
 
+    @staticmethod
+    def _create_order_object(response: Union[dict, list]) -> list:
+        """
+        Create Order object from response data
+        :param response: order data
+        :return: List, Order object/s
+        """
+        orders = []
+        if isinstance(response, list):
+            for order_ in response['order']:
+                order = Order(pair=order_['symbol'],
+                              side=order_['side'],
+                              amount=order_['quantity'],
+                              price=order_['price'],
+                              meta=order_)
+                orders.append(order)
+
+        elif isinstance(response, dict):
+            order = Order(pair=response['symbol'],
+                          side=response['side'],
+                          amount=response['quantity'],
+                          price=response['price'],
+                          meta=response)
+            orders.append(order)
+
+        return orders
+
+    @staticmethod
+    def _create_token_object(response: Union[dict, list]) -> list:
+        """
+        Create Token object from response data
+        :param response: order data
+        :return: List, Token object/s
+        """
+
+        tokens = []
+        if isinstance(response, list):
+            for token_ in response:
+                token = Token(id=token_['tokenId'],
+                              symbol=token_['symbol'])
+                try:
+                    token.name = token_['name']
+                    token.meta = token_
+                except KeyError:
+                    pass
+
+                tokens.append(token)
+
+        elif isinstance(response, dict):
+            token = Token(id=response['tokenId'],
+                          symbol=response['symbol'])
+            try:
+                token.name = response['name']
+                token.meta = response
+            except Exception as e:
+                print(e)
+            tokens.append(token)
+
+        return tokens
+
+    @staticmethod
+    def _create_pair_object(response: Union[dict, list]) -> list:
+        """
+        Create TradingPair object from response data
+        :param response: order data
+        :return: List, TradingPair object/s
+        """
+
+        pairs = []
+        if isinstance(response, list):
+            for pair_ in response:
+                pair = TradingPair(symbol=pair_['symbol'], meta=pair_)
+                pairs.append(pair)
+
+        elif isinstance(response, dict):
+            pair = TradingPair(symbol=response['symbol'], meta=response)
+            pairs.append(pair)
+
+        return pairs
+
     def get_all_tokens(self, **kwargs) -> list:
         """
         :param category: String, Token category, [ quote , all ], default all
@@ -193,13 +320,13 @@ class PublicAPI:
         url = self.base_url + "/api/v2/tokens"
         json_response = requests.get(url, kwargs).json()
         response = self._response_parser(json_response)
-        return response
+        return self._create_token_object(response)
 
-    def get_token_detail(self, tokenSymbol=None, tokenId=None, **kwargs) -> dict:
+    def get_token_detail(self, tokenSymbol=None, tokenId=None, **kwargs) -> list:
         """
         :param tokenSymbol: Token symbol. For example EPIC-002
         :param tokenId: Token id. For example, tti_5649544520544f4b454e6e40
-        :return: Dictionary, token details
+        :return: List, Token object
 
         RESPONSE: { 'tokenId': 'tti_f370fadb275bc2a1a839c753',
                     'name': 'Epic Cash',
@@ -246,12 +373,14 @@ class PublicAPI:
 
         if 'data' in response.keys() and 'ok' in response['msg']:
             response['msg'] = f'found token [{tokenSymbol if tokenSymbol else tokenId}] but no data present'
-        return response
+            return response
+        else:
+            return self._create_token_object(response)
 
     def get_listed_tokens(self, quoteTokenSymbol=None) -> list:
         """
         :param quoteTokenSymbol: REQUIRED! Quote token symbol. For example EPIC-002
-        :return: List, tokens that are already listed in specific market
+        :return: List, Token objects that are already listed in specific market
 
         RESPONSE: [{'tokenId': 'tti_687d8a93915393b219212c73', 'symbol': 'ETH-000'}, ...]
         """
@@ -259,7 +388,7 @@ class PublicAPI:
         params = {'quoteTokenSymbol': quoteTokenSymbol}
         json_response = requests.get(url, params).json()
         response = self._response_parser(json_response)
-        return response
+        return self._create_token_object(response)
 
     def get_unlisted_tokens(self, quoteTokenSymbol=None) -> list:
         """
@@ -272,12 +401,12 @@ class PublicAPI:
         params = {'quoteTokenSymbol': quoteTokenSymbol}
         json_response = requests.get(url, params).json()
         response = self._response_parser(json_response)
-        return response
+        return self._create_token_object(response)
 
-    def get_trading_pair(self, symbol=None) -> dict:
+    def get_trading_pair(self, symbol=None) -> list:
         """
         :param symbol: REQUIRED! Trading pair name. For example EPIC-002_BTC-000
-        :return: Dictionary, trading pair in detail
+        :return: List, TradingPair object/s in detail
 
         RESPONSE:  {'symbol': 'EPIC-002_BTC-000',
                     'tradingCurrency': 'EPIC-002',
@@ -308,13 +437,13 @@ class PublicAPI:
         params = {'symbol': symbol}
         json_response = requests.get(url, params).json()
         response = self._response_parser(json_response)
-        return response
+        return self._create_pair_object(response)
 
     def get_all_trading_pairs(self, **kwargs) -> list:
         """
-        :offset symbol: Search starting index, starts at 0 , default 0
-        :limit symbol: Search limit, max 500 , default 500
-        :return: List, all trading pairs
+        :param offset: Search starting index, starts at 0 , default 0
+        :param limit: Search limit, max 500 , default 500
+        :return: List, all TradingPair objects
 
         RESPONSE: [{'symbol': 'AAVO-000_VITE',
                     'tradeTokenSymbol': 'AAVO-000',
@@ -327,7 +456,7 @@ class PublicAPI:
         url = self.base_url + "/api/v2/markets"
         json_response = requests.get(url, kwargs).json()
         response = self._response_parser(json_response)
-        return response
+        return self._create_pair_object(response)
 
     def get_order(self, address=None, orderId=None) -> list:
         """
@@ -359,7 +488,7 @@ class PublicAPI:
         params = {'address': address, 'orderId': orderId}
         json_response = requests.get(url, params).json()
         response = self._response_parser(json_response)
-        return self._create_order(response)
+        return self._create_order_object(response)
 
     def get_orders(self, address=None, **kwargs) -> list:
         """
@@ -403,34 +532,7 @@ class PublicAPI:
         params = {**{'address': address}, **kwargs}
         json_response = requests.get(url, params).json()
         response = self._response_parser(json_response)
-        return self._create_order(response)
-
-    @staticmethod
-    def _create_order(response: Union[dict, list]) -> list:
-        """
-        Create Order object from response data
-        :param response: order data
-        :return: List, Order object/s
-        """
-        orders = []
-        if isinstance(response, list):
-            for order_ in response['order']:
-                order = Order(pair=order_['symbol'],
-                              side=order_['side'],
-                              amount=order_['quantity'],
-                              price=order_['price'])
-                order.meta = order_
-                orders.append(order)
-
-        elif isinstance(response, dict):
-            order = Order(pair=response['symbol'],
-                          side=response['side'],
-                          amount=response['quantity'],
-                          price=response['price'])
-            order.meta = response
-            orders.append(order)
-
-        return orders
+        return self._create_order_object(response)
 
     def get_24hr_ticker_price_changes(self, quoteTokenSymbol=None) -> list:
         """
@@ -625,10 +727,14 @@ class PublicAPI:
     def get_trade_mining_info(self) -> dict:
         """
         :return: Dictionary, current cycle's trade mining pool size and real-time fees accumulated
+
+        RESPONSE: {'tradePoolVx': {'1': '2386.387391592278053218', '2': '2386.387391592278053218',
+                   '3': '2386.387391592278053218', '4': '2386.387391592278053218'},
+                   'tradePoolFee': {'1': '4865.323236794250000000', '2': '0.118197284244750000',
+                   '3': '0.00794865', '4': '490.970596'}}
         """
         url = self.base_url + "/api/v2/trade_fee_info"
-        params = {'address': address}
-        json_response = requests.get(url, params).json()
+        json_response = requests.get(url).json()
         response = self._response_parser(json_response)
         return response
 
